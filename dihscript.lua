@@ -14,7 +14,9 @@ local SPEED, TIMEOUT, SKIP = 20, 3, 1
 local MIN_DIST = 6          -- farm ignores coins closer than this (Coin Aura grabs them). Set 0 to disable.
 local AURA_RADIUS = 8
 local EMOTE_ID, EMOTE_POS = 87058607990254, 0.84
-local joinRejoinEnabled = true
+local farmEnabled = true
+local emoteEnabled = true
+local applyEmote -- defined in the emote section
 
 local env = (getgenv and getgenv()) or _G
 env.__CoinFarmRun = (env.__CoinFarmRun or 0) + 1
@@ -39,8 +41,8 @@ gui.ResetOnSpawn = false
 gui.Parent = LP:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(270, 240)
-frame.Position = UDim2.new(0.5, -135, 0.5, -120)
+frame.Size = UDim2.fromOffset(270, 282)
+frame.Position = UDim2.new(0.5, -135, 0.5, -141)
 frame.BackgroundColor3 = Color3.fromRGB(25, 27, 35)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -104,13 +106,22 @@ local function button(text, y, color)
     return b
 end
 
-local toggle = button("Auto Join + Rejoin: ON", 42, Color3.fromRGB(38, 135, 95))
-toggle.Activated:Connect(function()
-    joinRejoinEnabled = not joinRejoinEnabled
-    toggle.Text = "Auto Join + Rejoin: " .. (joinRejoinEnabled and "ON" or "OFF")
-    toggle.BackgroundColor3 = joinRejoinEnabled
-        and Color3.fromRGB(38, 135, 95)
-        or Color3.fromRGB(65, 67, 78)
+local ON_COLOR = Color3.fromRGB(38, 135, 95)
+local OFF_COLOR = Color3.fromRGB(65, 67, 78)
+
+local farmToggle = button("Autofarm: ON", 42, ON_COLOR)
+farmToggle.Activated:Connect(function()
+    farmEnabled = not farmEnabled
+    farmToggle.Text = "Autofarm: " .. (farmEnabled and "ON" or "OFF")
+    farmToggle.BackgroundColor3 = farmEnabled and ON_COLOR or OFF_COLOR
+end)
+
+local emoteToggle = button("Emote: ON", 80, ON_COLOR)
+emoteToggle.Activated:Connect(function()
+    emoteEnabled = not emoteEnabled
+    emoteToggle.Text = "Emote: " .. (emoteEnabled and "ON" or "OFF")
+    emoteToggle.BackgroundColor3 = emoteEnabled and ON_COLOR or OFF_COLOR
+    if applyEmote then applyEmote() end
 end)
 
 local function makeBox(label, value, y)
@@ -141,13 +152,13 @@ local function makeBox(label, value, y)
     return box
 end
 
-local speedBox = makeBox("SPEED", SPEED, 85)
-local timeoutBox = makeBox("TIMEOUT", TIMEOUT, 123)
-local skipBox = makeBox("SKIP", SKIP, 161)
+local speedBox = makeBox("SPEED", SPEED, 122)
+local timeoutBox = makeBox("TIMEOUT", TIMEOUT, 160)
+local skipBox = makeBox("SKIP", SKIP, 198)
 
 local status = Instance.new("TextLabel")
 status.Size = UDim2.new(1, -20, 0, 25)
-status.Position = UDim2.fromOffset(10, 204)
+status.Position = UDim2.fromOffset(10, 244)
 status.BackgroundTransparency = 1
 status.Text = "Settings ready"
 status.TextColor3 = Color3.fromRGB(180, 190, 205)
@@ -230,7 +241,7 @@ end
 task.spawn(function()
     while active() do
         local pg = LP:FindFirstChild("PlayerGui")
-        if joinRejoinEnabled and pg and not pg:FindFirstChild("MainGUI") then
+        if pg and not pg:FindFirstChild("MainGUI") then
             pcall(function() tap(pg.DeviceSelect.Container.Tablet.Button) end)
             pcall(function() tap(pg.Join.Friends.Play) end)
         end
@@ -239,11 +250,10 @@ task.spawn(function()
 end)
 
 GuiService.ErrorMessageChanged:Connect(function(msg)
-    if not active() or not joinRejoinEnabled
-        or not msg or msg == "" or rejoining then return end
+    if not active() or not msg or msg == "" or rejoining then return end
     rejoining = true
     task.wait(1)
-    if active() and joinRejoinEnabled then
+    if active() then
         pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
     end
 end)
@@ -263,10 +273,19 @@ end)
 --------------------------------------------------------------------
 local track
 
+local function stopEmote()
+    if track then
+        pcall(function() track:Stop(0) end)
+        track = nil
+    end
+end
+
 local function emote(char)
+    if not emoteEnabled then return end
     local hum = char:WaitForChild("Humanoid")
     local animator = hum:WaitForChild("Animator")
-    if track then pcall(function() track:Stop(0) end) end
+    if not emoteEnabled then return end
+    stopEmote()
 
     local anim = Instance.new("Animation")
     anim.AnimationId = "rbxassetid://" .. EMOTE_ID
@@ -292,6 +311,15 @@ LP.CharacterAdded:Connect(function(char)
     task.spawn(emote, char)
 end)
 if LP.Character then task.spawn(emote, LP.Character) end
+
+applyEmote = function()
+    if emoteEnabled then
+        local char = LP.Character
+        if char then task.spawn(emote, char) end
+    else
+        stopEmote()
+    end
+end
 
 --------------------------------------------------------------------
 -- COIN HELPERS
@@ -330,7 +358,7 @@ task.spawn(function()
     while active() do
         local char = LP.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
+        if farmEnabled and root then
             for _, map in ipairs(Workspace:GetChildren()) do
                 local c = map:FindFirstChild("CoinContainer")
                 if c then
@@ -378,6 +406,12 @@ end
 task.spawn(function()
     while active() do
         local ok, err = pcall(function()
+            if not farmEnabled then
+                setStatus("Autofarm OFF")
+                task.wait(0.3)
+                return
+            end
+
             local char = LP.Character or LP.CharacterAdded:Wait()
             local root = char:WaitForChild("HumanoidRootPart")
             local hum = char:WaitForChild("Humanoid")
@@ -414,6 +448,7 @@ task.spawn(function()
 
             local began = os.clock()
             while active() and os.clock() - began < TIMEOUT do
+                if not farmEnabled then break end
                 if isCollected(coin) then break end
                 if hum.Health <= 0 then break end
                 if (root.Position - part.Position).Magnitude <= AURA_RADIUS then break end
@@ -434,4 +469,5 @@ task.spawn(function()
     end
 end)
 
-print("Coin Farm loaded")
+print("Happy farmin with ur one hand shakin")
+ptint("CALL ME A GOOD BOY ><")
